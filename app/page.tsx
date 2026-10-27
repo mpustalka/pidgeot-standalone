@@ -42,25 +42,49 @@ export default function HomePage() {
     const supabase = createClient();
 
     const result =
-      mode === "signin"
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password });
+  mode === "signin"
+    ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    : await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+      });
 
-    setBusy(false);
+console.log("Pidgeot auth result", {
+  mode,
+  userId: result.data.user?.id ?? null,
+  sessionCreated: !!result.data.session,
+  error: result.error
+    ? {
+        name: result.error.name,
+        message: result.error.message,
+        status: result.error.status,
+      }
+    : null,
+});
 
-    if (result.error) {
-      setMessage(result.error.message);
-      return;
-    }
+setBusy(false);
 
-    if (mode === "signup" && !result.data.session) {
-      setMessage("Account created. Check your email to confirm your account.");
-      return;
-    }
+if (result.error) {
+  setMessage(`Authentication failed: ${result.error.message}`);
+  return;
+}
 
-    setSignedIn(true);
-    setModalOpen(false);
-    setPassword("");
+if (mode === "signup" && !result.data.user) {
+  setMessage("Supabase returned no user. Check the browser console.");
+  return;
+}
+
+if (mode === "signup" && !result.data.session) {
+  setMessage(
+    "Signup request accepted, but no session was created. Check email confirmation and Authentication settings."
+  );
+  return;
+}
+
+setSignedIn(true);
+setModalOpen(false);
+setPassword("");
+window.location.reload();
 
     // Reload the game so it initializes with the authenticated user's balance.
     window.location.reload();
@@ -70,7 +94,7 @@ export default function HomePage() {
     return (
       <main className="min-h-screen bg-[#08090c] text-white grid place-items-center">
         <span className="text-xs uppercase tracking-[0.3em] text-white/50">
-          Loading flight systems
+          Throwing my pokeball..
         </span>
       </main>
     );
