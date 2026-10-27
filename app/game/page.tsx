@@ -1,3 +1,6 @@
-'use client';
-import {useEffect,useState} from 'react'; import {createClient} from '@/lib/supabase/client'; import {PidgeotFlightGame} from '@/components/pidgeot-flight-game'; import Link from 'next/link';
-export default function GamePage(){const [ready,setReady]=useState(false),[signed,setSigned]=useState(false);useEffect(()=>{createClient().auth.getUser().then(({data})=>{setSigned(!!data.user);setReady(true)});},[]);if(!ready)return <main className="min-h-screen grid place-items-center">Loading Pidgeot Flight…</main>;if(!signed)return <main className="min-h-screen grid place-items-center text-center p-6"><div><h1 className="text-3xl font-black">Login required</h1><p className="text-gray-400 mt-3">Create an account or sign in to play.</p><Link className="inline-block mt-6 bg-yellow-400 text-black font-bold px-6 py-3 rounded" href="/login">Go to login</Link></div></main>;return <main className="min-h-screen"><header className="p-4 border-b border-white/10 flex justify-between"><Link href="/" className="font-black text-yellow-400">PIDGEOT FLIGHT</Link><button onClick={async()=>{await createClient().auth.signOut();location.href='/login'}} className="text-sm text-gray-300">Sign out</button></header><div className="h-[calc(100vh-60px)]"><PidgeotFlightGame/></div></main>}
+
+import { redirect } from "next/navigation";
+
+export default function GamePage() {
+  redirect("/");
+}
