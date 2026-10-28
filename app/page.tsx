@@ -94,7 +94,7 @@ window.location.reload();
     return (
       <main className="min-h-screen bg-[#08090c] text-white grid place-items-center">
         <span className="text-xs uppercase tracking-[0.3em] text-white/50">
-          Throwing my pokeball..
+          Pidgeot is waking up...
         </span>
       </main>
     );
