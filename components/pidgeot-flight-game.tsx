@@ -701,6 +701,7 @@ export function PidgeotFlightGame() {
           </button>
         </div>
 
+        {activeTab === "all" && <p className="border-b border-white/[0.05] px-3 py-2 text-[10px] text-white/45">Includes simulated demo players</p>}
         <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2 border-b border-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-white/30">
           <span>Player</span>
           <span className="text-right">Bet</span>
@@ -733,7 +734,6 @@ export function PidgeotFlightGame() {
                     <span className="truncate">{bet.isOwn
                       ? `${bet.username} (You)`
                       : bet.username}</span>
-                    {bet.isDemo && <span className="ml-1 shrink-0 rounded border border-amber-300/25 px-1 text-[9px] uppercase text-amber-200">Demo</span>}
                   </span>
 
                   <span className="text-right font-semibold text-white/65">
@@ -1005,7 +1005,7 @@ export function PidgeotFlightGame() {
             </button>
           </div>
 
-          {activeTab === "all" && <p className="mb-2 text-[10px] text-white/45 lg:hidden">{activeBets.length} real bets · {demoBets.length} simulated demo bets</p>}
+          {activeTab === "all" && <p className="mb-2 text-[10px] text-white/45 lg:hidden">Includes simulated demo players · {activeBets.length} real / {demoBets.length} demo bets</p>}
           {/* Compact mobile bets list */}
           <div className="mb-3 max-h-[100px] overflow-y-auto lg:hidden">
             {displayBets.length === 0 ? (
@@ -1033,7 +1033,6 @@ export function PidgeotFlightGame() {
                       <span className="truncate">{bet.isOwn
                         ? `${bet.username} (You)`
                         : bet.username}</span>
-                      {bet.isDemo && <span className="ml-1 shrink-0 rounded border border-amber-300/25 px-1 text-[9px] uppercase text-amber-200">Demo</span>}
                     </span>
 
                     <span className="font-semibold text-white/60">
