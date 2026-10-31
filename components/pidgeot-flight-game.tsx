@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { Minus, Plus, Volume2, VolumeX, ChevronDown } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { pidgeotApi } from "@/lib/pidgeot/api";
 import Image from "next/image"
 
 interface BetPanel {
@@ -57,6 +58,7 @@ const DEMO_PLAYERS = [
 
 export function PidgeotFlightGame() {
   const [gameState, setGameState] = useState<"waiting" | "flying" | "crashed">("waiting")
+  const [currentRoundId, setCurrentRoundId] = useState<string | null>(null);
   const [currentMultiplier, setCurrentMultiplier] = useState(1.0)
   const [crashPoint, setCrashPoint] = useState(2.0)
   const [countdown, setCountdown] = useState(10)
@@ -162,70 +164,101 @@ export function PidgeotFlightGame() {
     return bets
   }, [])
 
+ 
   // Initialize game on mount.
   useEffect(() => {
-    let mounted = true
+    let mounted = true;
 
     const init = async () => {
-      if (!mounted) return
+      try {
+        await fetchUserBalance();
+        if (!mounted) return;
 
-      await fetchUserBalance()
-      if (!mounted) return
+        await fetchCrashHistory();
+        if (!mounted) return;
 
-      await fetchCrashHistory()
-      if (!mounted) return
+        startNewRound();
+      } catch (error) {
+        console.error("Failed to initialize game:", error);
+        toast.error("Could not initialize the game. Please refresh.");
+      }
+    };
 
-      startNewRound()
-    }
-
-    init()
+    void init();
 
     return () => {
-      mounted = false
+      mounted = false;
 
-      if (gameInterval.current) clearInterval(gameInterval.current)
-      if (countdownInterval.current) clearInterval(countdownInterval.current)
-    }
+      if (gameInterval.current) {
+        clearInterval(gameInterval.current);
+      }
+
+      if (countdownInterval.current) {
+        clearInterval(countdownInterval.current);
+      }
+    };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []);
 
   const fetchUserBalance = async () => {
     const {
       data: { user },
-    } = await supabase.auth.getUser()
+      error: authError,
+    } = await supabase.auth.getUser();
 
-    if (!user) return
+    if (authError) {
+      console.error("Failed to verify user:", authError.message);
+      toast.error("Could not verify your login. Please sign in again.");
+      return;
+    }
 
-    setUserId(user.id)
+    if (!user) {
+      setUserBalance(0);
+      setUsername(null);
+      setUserId(null);
+      toast.error("Please sign in to load your wallet.");
+      return;
+    }
 
-    const { data: profile } = await supabase
+    setUserId(user.id);
+    setUsername(user.email?.split("@")[0] ?? "Pilot");
+
+    const { data: profile, error: profileError } = await supabase
       .from("pidgeot_profiles")
       .select("username")
       .eq("user_id", user.id)
-      .single()
+      .maybeSingle();
+
+    if (profileError) {
+      console.error("Failed to load profile:", profileError.message);
+    }
 
     if (profile?.username) {
-      setUsername(profile.username)
-    } else if (user.email) {
-      setUsername(user.email.split("@")[0])
+      setUsername(profile.username);
     }
 
-    try {
-      const res = await fetch("/api/credits/balance")
+    const { data: wallet, error: walletError } = await supabase
+      .from("pidgeot_wallets")
+      .select("balance")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-      if (res.ok) {
-        const contentType = res.headers.get("content-type")
-
-        if (contentType?.includes("application/json")) {
-          const data = await res.json()
-          setUserBalance(data.balance || 0)
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch balance:", err)
+    if (walletError) {
+      console.error("Failed to load Supabase wallet:", walletError.message);
+      toast.error(`Wallet error: ${walletError.message}`);
+      return;
     }
-  }
+
+    if (!wallet) {
+      setUserBalance(0);
+      toast.error("No wallet found for this account.");
+      return;
+    }
+
+    setUserBalance(Number(wallet.balance));
+  };
+
 
   const fetchCrashHistory = async () => {
     const history: CrashHistory[] = []
@@ -238,7 +271,7 @@ export function PidgeotFlightGame() {
         color: getMultiplierColor(mult),
       })
     }
-
+    
     setCrashHistory(history)
   }
 
@@ -361,70 +394,71 @@ export function PidgeotFlightGame() {
   }
 
   const crashGame = (crashMult: number) => {
-    if (gameInterval.current) clearInterval(gameInterval.current)
-    if (countdownInterval.current) clearInterval(countdownInterval.current)
+  if (gameInterval.current) clearInterval(gameInterval.current)
+  if (countdownInterval.current) clearInterval(countdownInterval.current)
 
-    setGameState("crashed")
-    setCurrentMultiplier(crashMult)
+  setGameState("crashed")
+  setCurrentMultiplier(crashMult)
 
-    setCrashHistory((prev) => [
-      {
-        multiplier: crashMult,
-        color: getMultiplierColor(crashMult),
-      },
-      ...prev.slice(0, 14),
-    ])
+  setCrashHistory((prev) => [
+    {
+      multiplier: crashMult,
+      color: getMultiplierColor(crashMult),
+    },
+    ...prev.slice(0, 14),
+  ])
 
-    // Save game history for the user's bets.
-    betPanelsRef.current.forEach((panel) => {
-      if (panel.betStatus === "placed" || panel.betStatus === "cashed") {
-        const betAmount = Number.parseInt(panel.betAmount) || 0
-        const cashedOut = panel.betStatus === "cashed"
-        const cashoutMult = cashedOut ? panel.cashedAmount / betAmount : 0
-        const winAmount = cashedOut ? panel.cashedAmount : 0
-        const profit = cashedOut ? winAmount - betAmount : -betAmount
+  // Save game history for the user's bets.
+  betPanelsRef.current.forEach((panel) => {
+    if (panel.betStatus === "placed" || panel.betStatus === "cashed") {
+      const betAmount = Number.parseInt(panel.betAmount) || 0
+      const cashedOut = panel.betStatus === "cashed"
+      const cashoutMult = cashedOut ? panel.cashedAmount / betAmount : 0
+      const winAmount = cashedOut ? panel.cashedAmount : 0
+      const profit = cashedOut ? winAmount - betAmount : -betAmount
 
-        const gameResult: MyGameHistory = {
-          id: `${Date.now()}-${Math.random()}`,
-          betAmount,
-          crashPoint: crashMult,
-          cashedOut,
-          cashoutMultiplier: cashedOut ? cashoutMult : null,
-          winAmount,
-          profit,
-          createdAt: new Date().toISOString(),
-        }
-
-        const storageKey = `pidgeot_history_${userId || "guest"}`
-        const existing = localStorage.getItem(storageKey)
-        const history = existing ? JSON.parse(existing) : []
-
-        history.unshift(gameResult)
-
-        localStorage.setItem(
-          storageKey,
-          JSON.stringify(history.slice(0, 50)),
-        )
-
-        setMyGameHistory((prev) => [gameResult, ...prev.slice(0, 49)])
+      const gameResult: MyGameHistory = {
+        id: `${Date.now()}-${Math.random()}`,
+        betAmount,
+        crashPoint: crashMult,
+        cashedOut,
+        cashoutMultiplier: cashedOut ? cashoutMult : null,
+        winAmount,
+        profit,
+        createdAt: new Date().toISOString(),
       }
-    })
 
-    // Reset panels after the crash.
-    setBetPanels((prev) =>
-      prev.map((panel) => ({
-        ...panel,
-        betStatus: "none",
-        betId: null,
-        cashedAmount: 0,
-      })),
-    )
+      const storageKey = `pidgeot_history_${userId || "guest"}`
+      const existing = localStorage.getItem(storageKey)
+      const history = existing ? JSON.parse(existing) : []
 
-    fetchUserBalance()
+      history.unshift(gameResult)
 
-    // Start another round after the crash display.
-    setTimeout(() => startNewRound(), 4000)
-  }
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify(history.slice(0, 50)),
+      )
+
+      setMyGameHistory((prev) => [gameResult, ...prev.slice(0, 49)])
+    }
+  })
+
+  // Reset panels after the crash.
+  setBetPanels((prev) =>
+    prev.map((panel) => ({
+      ...panel,
+      betStatus: "none",
+      betId: null,
+      cashedAmount: 0,
+    })),
+  )
+
+  // Refresh the user's balance.
+  fetchUserBalance()
+
+  // Start another round after the crash display.
+  setTimeout(() => startNewRound(), 4000)
+}
 
   const handlePlaceBet = useCallback(
     (panelIndex: number) => {
@@ -759,7 +793,7 @@ export function PidgeotFlightGame() {
               {panel.cashedAmount.toLocaleString()} coins
             </span>
           </div>
-        ) : isPending ? (
+        ) : panel.betStatus === "placed" && gameState === "waiting" ? (
           <div className="space-y-2">
             <div className="flex min-h-[46px] items-center justify-center rounded-lg border border-sky-400/20 bg-sky-400/10 text-xs font-semibold text-sky-200">
               Bet queued for next round
