@@ -9,6 +9,8 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@netlify/blobs": "^11.1.7",
+    "@netlify/database": "^2.0.1",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.109.0",
     "class-variance-authority": "^0.7.1",
