@@ -5,6 +5,8 @@ import { Minus, Plus, Volume2, VolumeX, ChevronDown } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import Image from "next/image"
+import { demoBetsForRound } from "@/lib/pidgeot/demo-bets"
+import type { GameActivity } from "@/lib/pidgeot/activity"
 
 interface BetPanel {
   betAmount: string
@@ -31,12 +33,13 @@ interface ActiveBet {
   username: string
   betAmount: number
   cashout?: number
-  cashedAt?: number
+  isOwn?: boolean
+  isDemo?: boolean
 }
 
 interface CrashHistory {
+  id: string
   multiplier: number
-  color: string
 }
 
 interface MyGameHistory {
@@ -52,23 +55,9 @@ interface MyGameHistory {
 
 const CHIP_VALUES = [5, 10, 25, 50]
 
-const DEMO_PLAYERS = [
-  "Jollytherancher",
-  "EeveeSxx",
-  "ImGlob55",
-  "Brainzr",
-  "Herpesoh9",
-  "PidgeotKillah",
-  "Imatreecko",
-  "MagnemiteCrutch",
-  "MagicapCrusade",
-  "JoshSlugma",
-]
-
 export function PidgeotFlightGame() {
   const [gameState, setGameState] = useState<"waiting" | "flying" | "crashed">("waiting")
   const [currentMultiplier, setCurrentMultiplier] = useState(1.0)
-  const [crashPoint, setCrashPoint] = useState(2.0)
   const [countdown, setCountdown] = useState(10)
   const [userBalance, setUserBalance] = useState(0)
   const [soundEnabled, setSoundEnabled] = useState(true)
@@ -97,14 +86,17 @@ export function PidgeotFlightGame() {
 
   const [showPanel2, setShowPanel2] = useState(false)
   const [crashHistory, setCrashHistory] = useState<CrashHistory[]>([])
+  const [demoRound, setDemoRound] = useState<PidgeotRound | null>(null)
   const [activeBets, setActiveBets] = useState<ActiveBet[]>([])
   const [myBets, setMyBets] = useState<ActiveBet[]>([])
   const [username, setUsername] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [myGameHistory, setMyGameHistory] = useState<MyGameHistory[]>([])
 
-  const gameStateRef = useRef(gameState)
-  const multiplierRef = useRef(currentMultiplier)
+  const [activityError, setActivityError] = useState("")
+  const [activityLoading, setActivityLoading] = useState(true)
+  const activityEpoch = useRef(0)
+  const mutationsInFlight = useRef(0)
   const betPanelsRef = useRef(betPanels)
   const roundRef = useRef<PidgeotRound | null>(null)
   const controllerTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -115,72 +107,37 @@ export function PidgeotFlightGame() {
   const supabase = createClient()
 
   useEffect(() => {
-    gameStateRef.current = gameState
-  }, [gameState])
-
-  useEffect(() => {
-    multiplierRef.current = currentMultiplier
-  }, [currentMultiplier])
-
-  useEffect(() => {
     betPanelsRef.current = betPanels
   }, [betPanels])
 
-  // Generate a simulated crash point.
-  const generateCrashPoint = () => {
-    const rand = Math.random()
-
-    if (rand < 0.5) return 1.0 + Math.random() * 1.0
-    if (rand < 0.8) return 2.0 + Math.random() * 2.0
-    if (rand < 0.95) return 4.0 + Math.random() * 6.0
-
-    return 10.0 + Math.random() * 40.0
-  }
-
-  const getMultiplierColor = (mult: number) => {
-    if (mult < 2) return "#ff526b"
-    if (mult < 10) return "#45e0a0"
-    return "#bd83ff"
-  }
+  useEffect(() => {
+    const refresh = () => { void fetchUserBalance(); };
+    window.addEventListener("wallet-updated", refresh);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      activityEpoch.current++;
+      setMyGameHistory([]); setMyBets([]);
+      if (!session) {
+        setUserBalance(0); setUsername(null); setUserId(null);
+        setActiveBets(prev => prev.map(bet => ({ ...bet, isOwn: false })));
+        setBetPanels(prev => prev.map(panel => ({ ...panel, betStatus: "none", betId: null, cashedAmount: 0 })));
+      }
+      else window.setTimeout(refresh, 0);
+    });
+    return () => { window.removeEventListener("wallet-updated", refresh); subscription.unsubscribe(); };
+  }, []);
 
   const getDisplayName = useCallback(() => {
     return username || "You"
   }, [username])
 
-  const generateDemoBets = useCallback(() => {
-    const numBets = Math.floor(Math.random() * 8) + 3
-    const bets: ActiveBet[] = []
-    const usedPlayers = new Set<string>()
-
-    for (let i = 0; i < numBets; i++) {
-      let player =
-        DEMO_PLAYERS[Math.floor(Math.random() * DEMO_PLAYERS.length)]
-
-      while (usedPlayers.has(player)) {
-        player =
-          DEMO_PLAYERS[Math.floor(Math.random() * DEMO_PLAYERS.length)]
-      }
-
-      usedPlayers.add(player)
-
-      const amounts = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
-
-      bets.push({
-        id: `demo-${i}-${Date.now()}`,
-        username: player,
-        betAmount: amounts[Math.floor(Math.random() * amounts.length)],
-      })
-    }
-
-    return bets
-  }, [])
-
- 
   // Keep the database round controller synchronized for every open game client.
   useEffect(() => {
     let mounted = true
+    let polling = false
 
     const poll = async () => {
+      if (polling) return
+      polling = true
       try {
         const response = await fetch("/api/pidgeot/controller", {
           method: "POST",
@@ -194,11 +151,12 @@ export function PidgeotFlightGame() {
 
         const round = payload.round as PidgeotRound
         roundRef.current = round
+        setDemoRound(round)
 
         if (lastRoundId.current !== round.id) {
           lastRoundId.current = round.id
           autoCashoutInFlight.current.clear()
-          setActiveBets(generateDemoBets())
+          setActiveBets([])
           setMyBets([])
           setBetPanels((prev) => prev.map((panel) => ({
             ...panel, betStatus: "none", betId: null, cashedAmount: 0,
@@ -217,23 +175,56 @@ export function PidgeotFlightGame() {
             const elapsed = Math.max(0, Date.now() - new Date(round.starts_at).getTime())
             const multiplier = Math.floor((1 + elapsed / 3000) * 100) / 100
             setCurrentMultiplier(multiplier)
-            setActiveBets((prev) => prev.map((bet) => {
-              if (!bet.id.startsWith("demo-") || bet.cashout) return bet
-              return Math.random() < 0.015 ? { ...bet, cashout: multiplier, cashedAt: multiplier } : bet
-            }))
+
           }
         } else {
           setGameState("crashed")
           const crash = Number(round.crash_multiplier ?? 1)
           setCurrentMultiplier(crash)
-          setCrashPoint(crash)
-          setCrashHistory((prev) => prev[0]?.multiplier === crash ? prev : [
-            { multiplier: crash, color: getMultiplierColor(crash) }, ...prev.slice(0, 14),
-          ])
           void fetchUserBalance()
         }
+        const epoch = activityEpoch.current;
+        const { data: { session } } = await supabase.auth.getSession();
+        const activityResponse = await fetch(`/api/pidgeot/activity?roundId=${encodeURIComponent(round.id)}`, {
+          cache: "no-store",
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        });
+        if (!activityResponse.ok) throw new Error("Game activity could not be loaded. Retrying…");
+        const activity: GameActivity = await activityResponse.json();
+        if (!mounted || mutationsInFlight.current > 0 || epoch !== activityEpoch.current || activity.roundId !== roundRef.current?.id) return;
+        setCrashHistory(activity.crashes);
+        setActiveBets(activity.bets);
+        setMyBets(activity.ownBets);
+        setMyGameHistory(activity.history);
+        // Restore recorded bets after refresh, including bets placed on another device.
+        setBetPanels(prev => {
+          const ownIds = new Set(activity.ownBets.map(b => b.id));
+          const slots = prev.map(p => p.betId && !ownIds.has(p.betId)
+            ? { ...p, betStatus: "none" as const, betId: null, cashedAmount: 0 }
+            : { ...p });
+          const assigned = new Set(slots.flatMap(p => p.betId ? [p.betId] : []));
+          activity.ownBets.forEach(bet => {
+            let index = slots.findIndex(p => p.betId === bet.id);
+            if (index < 0 && !assigned.has(bet.id)) index = slots.findIndex(p => p.betStatus === "none");
+            if (index < 0) return;
+            assigned.add(bet.id);
+            slots[index] = { ...slots[index], betId: bet.id, betAmount: String(bet.betAmount),
+              betStatus: bet.status === "cashed_out" ? "cashed" : bet.status === "active" ? "placed" : "none",
+              cashedAmount: bet.payout, autoCashout: String(bet.autoCashout ?? 2),
+              autoCashoutEnabled: bet.autoCashout !== null, betMode: bet.autoCashout !== null ? "auto" : "bet" };
+          });
+          return slots;
+        });
+        if (activity.ownBets.length > 1) setShowPanel2(true);
+        setActivityLoading(false);
+        setActivityError("");
       } catch (error) {
-        console.error("Round synchronization failed:", error)
+        if (mounted) {
+          setActivityLoading(false);
+          setActivityError("Live activity is unavailable. Retrying automatically…");
+        }
+      } finally {
+        polling = false;
       }
     }
 
@@ -325,42 +316,48 @@ export function PidgeotFlightGame() {
 
 
   const cashoutBet = async (betId: string, panelIndex: number) => {
+    activityEpoch.current++;
+    mutationsInFlight.current++;
     try {
       const { data, error } = await supabase.rpc("pidgeot_cashout", { p_bet_id: betId })
       if (error) throw error
       const row = Array.isArray(data) ? data[0] : data
       const payout = Number(row?.payout ?? row?.[0]?.payout)
-      const cashoutMultiplier = Number(row?.cashout_multiplier ?? row?.[0]?.cashout_multiplier ?? multiplierRef.current)
-      if (!Number.isFinite(payout)) throw new Error("Cashout did not return a payout")
+      const cashoutMultiplier = Number(row?.cashout_multiplier ?? row?.[0]?.cashout_multiplier)
+      if (!Number.isFinite(payout) || !Number.isFinite(cashoutMultiplier)) throw new Error("Cashout did not return a payout")
+      activityEpoch.current++
       setBetPanels((prev) => prev.map((panel, i) => i === panelIndex ? { ...panel, betStatus: "cashed", cashedAmount: payout } : panel))
-      setMyBets((prev) => prev.map((bet) => bet.id === betId ? { ...bet, cashout: cashoutMultiplier, cashedAt: cashoutMultiplier } : bet))
-      setActiveBets((prev) => prev.map((bet) => bet.id === betId ? { ...bet, cashout: cashoutMultiplier, cashedAt: cashoutMultiplier } : bet))
+      setMyBets((prev) => prev.map((bet) => bet.id === betId ? { ...bet, cashout: cashoutMultiplier } : bet))
+      setActiveBets((prev) => prev.map((bet) => bet.id === betId ? { ...bet, cashout: cashoutMultiplier } : bet))
       await fetchUserBalance()
       toast.success(`Cashed out at ${cashoutMultiplier.toFixed(2)}x · ${payout} coins`)
     } catch (error) {
       autoCashoutInFlight.current.delete(betId)
       console.error("Cashout failed:", error)
       toast.error(error instanceof Error ? error.message : "Cashout failed")
-    }
+    } finally { mutationsInFlight.current--; activityEpoch.current++; }
   }
 
   const handlePlaceBet = useCallback(async (panelIndex: number) => {
     const panel = betPanelsRef.current[panelIndex]
     const round = roundRef.current
     if (!panel || !round || round.status !== "betting") { toast.error("Bets are closed"); return }
-    if (panel.betStatus !== "none") return
+    if (panel.betStatus !== "none" || mutationsInFlight.current > 0) return
     const amount = Number.parseInt(panel.betAmount, 10) || 0
     if (amount < 1 || amount > 50) { toast.error("Bet must be between 1 and 50 coins"); return }
     if (amount > userBalance) { toast.error("Insufficient balance"); return }
     const autoCashout = panel.betMode === "auto" && panel.autoCashoutEnabled ? Number(panel.autoCashout) : null
     if (autoCashout !== null && (!Number.isFinite(autoCashout) || autoCashout < 1.01)) { toast.error("Auto cashout must be at least 1.01x"); return }
+    activityEpoch.current++;
+    mutationsInFlight.current++;
     try {
       const { data, error } = await supabase.rpc("pidgeot_place_bet", { p_round_id: round.id, p_amount: amount, p_auto_cashout: autoCashout })
       if (error) throw error
       const bet = Array.isArray(data) ? data[0] : data
       const betId = bet?.id ?? bet?.bet_id
       if (!betId) throw new Error("Bet was accepted but no bet ID was returned")
-      const newBet: ActiveBet = { id: betId, username: getDisplayName(), betAmount: amount }
+      activityEpoch.current++
+      const newBet: ActiveBet = { id: betId, username: getDisplayName(), betAmount: amount, isOwn: true }
       setBetPanels((prev) => prev.map((item, i) => i === panelIndex ? { ...item, betStatus: "placed", betId } : item))
       setMyBets((prev) => [...prev.filter((item) => item.id !== betId), newBet])
       setActiveBets((prev) => [...prev.filter((item) => item.id !== betId), newBet])
@@ -369,7 +366,7 @@ export function PidgeotFlightGame() {
     } catch (error) {
       console.error("Place bet failed:", error)
       toast.error(error instanceof Error ? error.message : "Could not place bet")
-    }
+    } finally { mutationsInFlight.current--; activityEpoch.current++; }
   }, [userBalance, getDisplayName])
 
   const handleCashout = useCallback(async (panelIndex: number) => {
@@ -385,9 +382,12 @@ export function PidgeotFlightGame() {
     const panel = betPanelsRef.current[panelIndex]
     if (!panel?.betId || panel.betStatus !== "placed") return
     if (roundRef.current?.status !== "betting") { toast.error("This bet can no longer be cancelled"); return }
+    activityEpoch.current++;
+    mutationsInFlight.current++;
     try {
       const { error } = await supabase.rpc("pidgeot_cancel_bet", { p_bet_id: panel.betId })
       if (error) throw error
+      activityEpoch.current++
       const betId = panel.betId
       setBetPanels((prev) => prev.map((item, i) => i === panelIndex ? { ...item, betStatus: "none", betId: null, cashedAmount: 0 } : item))
       setMyBets((prev) => prev.filter((bet) => bet.id !== betId))
@@ -397,7 +397,7 @@ export function PidgeotFlightGame() {
     } catch (error) {
       console.error("Cancel bet failed:", error)
       toast.error(error instanceof Error ? error.message : "Could not cancel bet")
-    }
+    } finally { mutationsInFlight.current--; activityEpoch.current++; }
   }, [])
 
   const updateBetAmount = (index: number, value: string | number) => {
@@ -667,30 +667,9 @@ export function PidgeotFlightGame() {
     )
   }
 
-  const displayBets = activeTab === "all" ? activeBets : myBets
-  const displayName = getDisplayName()
-
-  const fetchMyGameHistory = useCallback(async () => {
-    const storageKey = `pidgeot_history_${userId || "guest"}`
-    const existing = localStorage.getItem(storageKey)
-
-    if (existing) {
-      try {
-        const history = JSON.parse(existing)
-        setMyGameHistory(history.slice(0, 10))
-      } catch (err) {
-        console.error("Failed to parse game history:", err)
-      }
-    }
-  }, [userId])
-
-  useEffect(() => {
-    if (userId) {
-      fetchMyGameHistory()
-    }
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId])
+  const demoBets = demoBetsForRound(demoRound, currentMultiplier, Date.now());
+  const allBets: ActiveBet[] = [...activeBets, ...demoBets];
+  const displayBets = activeTab === "all" ? allBets : myBets
 
   return (
     <div className="flex h-full flex-col bg-[#08080b] text-white lg:flex-row">
@@ -706,7 +685,7 @@ export function PidgeotFlightGame() {
                 : "text-white/40 hover:text-white/75"
             }`}
           >
-            All bets <span className="text-white/45">{activeBets.length}</span>
+            All bets <span className="text-white/45">{allBets.length}</span>
           </button>
 
           <button
@@ -722,6 +701,7 @@ export function PidgeotFlightGame() {
           </button>
         </div>
 
+        {activeTab === "all" && <p className="border-b border-white/[0.05] px-3 py-2 text-[10px] text-white/45">Includes simulated demo players</p>}
         <div className="grid grid-cols-[minmax(0,1fr)_48px_48px] gap-2 border-b border-white/[0.05] px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-white/30">
           <span>Player</span>
           <span className="text-right">Bet</span>
@@ -731,7 +711,7 @@ export function PidgeotFlightGame() {
         <div className="flex-1 overflow-y-auto p-2">
           {displayBets.length === 0 ? (
             <div className="mt-8 text-center text-xs text-white/35">
-              No bets yet
+              {activityLoading ? "Loading bets…" : activityError ? "Bets unavailable" : "No bets this round"}
             </div>
           ) : (
             <div className="space-y-1">
@@ -745,15 +725,15 @@ export function PidgeotFlightGame() {
                   }`}
                 >
                   <span
-                    className={`truncate ${
-                      bet.username === displayName
+                    className={`flex min-w-0 items-center ${
+                      bet.isOwn
                         ? "font-bold text-amber-300"
                         : "text-white/65"
                     }`}
                   >
-                    {bet.username === displayName
+                    <span className="truncate">{bet.isOwn
                       ? `${bet.username} (You)`
-                      : bet.username}
+                      : bet.username}</span>
                   </span>
 
                   <span className="text-right font-semibold text-white/65">
@@ -774,12 +754,13 @@ export function PidgeotFlightGame() {
         </div>
 
         <div className="border-t border-white/[0.07] px-3 py-2 text-[10px] text-white/25">
-          All player activity
+          {activeBets.length} real bets · {demoBets.length} simulated demo bets
         </div>
       </aside>
 
       {/* Main game column */}
       <main className="flex min-w-0 flex-1 flex-col">
+        {activityError && <p role="status" className="border-b border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-200">{activityError}</p>}
         {/* Recent crash results */}
         <div className="flex h-11 shrink-0 items-center gap-2 overflow-hidden border-b border-white/[0.07] bg-[#0b0b0f] px-3">
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-white/35">
@@ -787,9 +768,10 @@ export function PidgeotFlightGame() {
           </span>
 
           <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto scrollbar-hide">
-            {crashHistory.map((crash, i) => (
+            {crashHistory.length === 0 && <span className="text-[10px] text-white/35">{activityLoading ? "Loading results…" : activityError ? "Results unavailable" : "No completed rounds yet"}</span>}
+            {crashHistory.map((crash) => (
               <span
-                key={`${crash.multiplier}-${i}`}
+                key={crash.id}
                 className="shrink-0 rounded-md px-2 py-1 text-[10px] font-bold"
                 style={{
                   color:
@@ -1007,7 +989,7 @@ export function PidgeotFlightGame() {
                   : "text-white/40"
               }`}
             >
-              All bets ({activeBets.length})
+              All bets ({allBets.length})
             </button>
 
             <button
@@ -1023,15 +1005,16 @@ export function PidgeotFlightGame() {
             </button>
           </div>
 
+          {activeTab === "all" && <p className="mb-2 text-[10px] text-white/45 lg:hidden">Includes simulated demo players · {activeBets.length} real / {demoBets.length} demo bets</p>}
           {/* Compact mobile bets list */}
           <div className="mb-3 max-h-[100px] overflow-y-auto lg:hidden">
             {displayBets.length === 0 ? (
               <div className="py-2 text-center text-xs text-white/35">
-                No bets yet
+                {activityLoading ? "Loading bets…" : activityError ? "Bets unavailable" : "No bets this round"}
               </div>
             ) : (
               <div className="space-y-1">
-                {displayBets.slice(0, 5).map((bet) => (
+                {displayBets.map((bet) => (
                   <div
                     key={bet.id}
                     className={`flex items-center justify-between rounded-md px-3 py-2 text-xs ${
@@ -1041,15 +1024,15 @@ export function PidgeotFlightGame() {
                     }`}
                   >
                     <span
-                      className={
-                        bet.username === displayName
+                      className={`flex min-w-0 items-center ${
+                        bet.isOwn
                           ? "font-bold text-amber-300"
                           : "text-white/65"
-                      }
+                      }`}
                     >
-                      {bet.username === displayName
+                      <span className="truncate">{bet.isOwn
                         ? `${bet.username} (You)`
-                        : bet.username}
+                        : bet.username}</span>
                     </span>
 
                     <span className="font-semibold text-white/60">
@@ -1073,10 +1056,8 @@ export function PidgeotFlightGame() {
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {renderBetPanel(0)}
 
-            {showPanel2 ? (
-              renderBetPanel(1)
-            ) : (
-              <div className="hidden rounded-xl border border-white/[0.07] bg-[#111116] p-3 sm:p-4 xl:block">
+            {showPanel2 && renderBetPanel(1)}
+              <div className="rounded-xl border border-white/[0.07] bg-[#111116] p-3 sm:p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-white">
@@ -1089,17 +1070,18 @@ export function PidgeotFlightGame() {
 
                   <button
                     type="button"
+                    disabled={showPanel2}
                     onClick={() => setShowPanel2(true)}
                     className="flex items-center gap-1.5 rounded-md border border-white/10 px-2.5 py-2 text-xs font-semibold text-white/60 transition hover:bg-white/[0.05] hover:text-white"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Add bet panel
+                    {showPanel2 ? "Second panel enabled" : "Add bet panel"}
                   </button>
                 </div>
 
                 {myGameHistory.length === 0 ? (
                   <div className="py-8 text-center text-xs text-white/35">
-                    No game history yet
+                    {activityLoading ? "Loading your games…" : activityError ? "History unavailable" : !userId ? "Sign in to see your games" : "No completed games yet"}
                   </div>
                 ) : (
                   <div className="max-h-[300px] space-y-1 overflow-y-auto">
@@ -1129,7 +1111,7 @@ export function PidgeotFlightGame() {
 
                           {game.cashedOut ? (
                             <span className="mt-1 block font-bold text-emerald-300">
-                              +{game.profit} @{" "}
+                              {game.profit >= 0 ? "+" : ""}{game.profit} @{" "}
                               {game.cashoutMultiplier?.toFixed(2)}x
                             </span>
                           ) : (
@@ -1143,7 +1125,6 @@ export function PidgeotFlightGame() {
                   </div>
                 )}
               </div>
-            )}
           </div>
 
           {/* How to play */}
