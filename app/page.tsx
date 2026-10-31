@@ -98,7 +98,7 @@ window.dispatchEvent(new Event("wallet-updated"));
     <main className="min-h-screen bg-[#08090c] text-white">
       <header className="flight-topbar"><a href="#game" className="flight-brand"><img src="/images/pidgeot-icon.webp" alt=""/>PIDGEOT FLIGHT</a><span className="flight-eyebrow">{signedIn ? "FLIGHT DECK" : "GAME PREVIEW"}</span></header>
       <nav className="flight-nav" aria-label="Main navigation">{([{id:"game", label:"Game", icon:Gamepad2}, {id:"prizes", label:"Prize Shop", icon:Gift}, {id:"account", label:"Account", icon:UserRound}]).map(({id,label,icon:Icon}) => <a key={id} href={`#${id}`} aria-current={tab === id ? "page" : undefined}><Icon size={18}/>{label}</a>)}</nav>
-      <div className="flight-workspace">
+      <div className="flight-workspace" data-view={tab}>
       <section aria-label="Live game" className="relative overflow-hidden rounded-2xl border border-white/10">
         <PidgeotFlightGame />
 

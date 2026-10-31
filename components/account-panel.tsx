@@ -56,7 +56,7 @@ function countdownText(ms: number) {
   return `${hours}h ${minutes}m ${seconds}s`;
 }
 
-export default function ProfilePage() {
+export default function AccountPanel() {
   const [user, setUser] = useState<{
     id: string;
     email?: string;
@@ -80,7 +80,10 @@ export default function ProfilePage() {
       await db.auth.getUser();
 
     if (authError || !authData.user) {
-      setLoading(false); return;
+      setUser(null);
+      setProfile(null);
+      setWallet(null);
+      setLoading(false);
       return;
     }
 
@@ -134,7 +137,6 @@ export default function ProfilePage() {
     ].filter(Boolean);
 
     if (errors.length) {
-      console.error('Profile loading error:', errors);
       setMessage(
         'Some account information could not load. Please try again.'
       );
@@ -149,6 +151,13 @@ export default function ProfilePage() {
 
   useEffect(() => {
     void loadProfile();
+    const refresh = () => { void loadProfile(); };
+    window.addEventListener('wallet-updated', refresh);
+    const timer = window.setInterval(refresh, 10000);
+    return () => {
+      window.removeEventListener('wallet-updated', refresh);
+      window.clearInterval(timer);
+    };
   }, [loadProfile]);
 
   useEffect(() => {
@@ -245,6 +254,7 @@ export default function ProfilePage() {
             className="rounded-2xl border border-white/10 bg-[#171a21] p-4 text-sm font-medium text-amber-300"
           >
             {message}
+            <button type="button" onClick={() => { setMessage(''); void loadProfile(); }} className="flight-button ml-3">Refresh account</button>
           </div>
         )}
 
@@ -328,7 +338,7 @@ export default function ProfilePage() {
               </div>
               <div className="rounded-2xl bg-white/5 p-4">
                 <p className="text-sm text-white/50">Free rounds</p>
-                <p className="mt-1 text-2xl font-black text-amber-800">
+                <p className="mt-1 text-2xl font-black text-amber-300">
                   {settings.free_rounds_enabled
                     ? settings.daily_free_rounds
                     : 0}
@@ -345,7 +355,7 @@ export default function ProfilePage() {
               !rewardsEnabled ||
               !wallet
             }
-            className="mt-6 w-full rounded-2xl bg-violet-700 px-5 py-4 font-black text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="mt-6 w-full rounded-2xl bg-amber-400 px-5 py-4 font-black text-slate-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {claiming
               ? 'Claiming rewards…'
@@ -364,7 +374,7 @@ export default function ProfilePage() {
         </section>
 
         <section className={card}>
-          <div className="flex items-center justify-between"><h2 className="text-2xl font-black">Pilot account</h2><button onClick={signOut} className="flight-button">Log out</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-2xl font-black">Pilot account</h2><button onClick={signOut} className="flight-button">Log out</button></div>
           <dl className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-sm text-white/50">Username</dt>
