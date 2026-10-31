@@ -255,7 +255,7 @@ export default function ProfilePage() {
               {wallet ? Number(wallet.balance).toLocaleString() : '—'}
             </p>
             <p className="mt-2 text-sm text-white/50">
-              Available for your next flight.
+              Available for flights and Prize Shop redemptions.
             </p>
             {!wallet && (
               <p className="mt-3 text-sm text-rose-700">
@@ -265,12 +265,12 @@ export default function ProfilePage() {
           </div>
 
           <div className={card}>
-            <p className="font-semibold text-white/50">Prize points</p>
+            <p className="font-semibold text-white/50">Reward points (legacy)</p>
             <p className="mt-2 text-4xl font-black text-amber-300">
               {wallet ? Number(wallet.prize_points ?? 0).toLocaleString() : '—'}
             </p>
             <p className="mt-2 text-sm text-white/50">
-              Points for eligible rewards in the prize shelf.
+              Prize Shop purchases use your game coins.
             </p>
             <a
               href="#prizes"
@@ -319,7 +319,7 @@ export default function ProfilePage() {
                 </p>
               </div>
               <div className="rounded-2xl bg-white/5 p-4">
-                <p className="text-sm text-white/50">Prize points</p>
+                <p className="text-sm text-white/50">Reward points (legacy)</p>
                 <p className="mt-1 text-2xl font-black text-amber-300">
                   {settings.login_bonus_enabled
                     ? settings.daily_login_points
