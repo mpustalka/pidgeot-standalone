@@ -7,21 +7,6 @@ export const dynamic = "force-dynamic";
 
 export async function POST() {
   try {
-    const url =
-      process.env.NEXT_PUBLIC_SUPABASE_URL ??
-      process.env.SUPABASE_URL;
-
-    const key =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ??
-      process.env.SERVICE_ROLE_KEY;
-
-    console.log("Pidgeot controller diagnostics:", {
-      url,
-      keyPresent: Boolean(key),
-      keyLength: key?.length ?? 0,
-      keyPrefix: key?.slice(0, 10),
-    });
-
     const supabase = createAdminClient();
 
     const { data, error } = await supabase.rpc(
@@ -42,10 +27,16 @@ export async function POST() {
       );
     }
 
+    const round = Array.isArray(data) ? data[0] : data;
     return NextResponse.json({
       success: true,
-      round: data,
-    });
+      round: round ? {
+        id: round.id, round_number: round.round_number, status: round.status,
+        betting_opens_at: round.betting_opens_at, starts_at: round.starts_at,
+        crashed_at: round.crashed_at,
+        crash_multiplier: ["crashed", "settled"].includes(round.status) ? round.crash_multiplier : null,
+      } : null,
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Controller error:", error);
 
