@@ -126,6 +126,16 @@ export function PidgeotFlightGame() {
     betPanelsRef.current = betPanels
   }, [betPanels])
 
+  useEffect(() => {
+    const refresh = () => { void fetchUserBalance(); };
+    window.addEventListener("wallet-updated", refresh);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) { setUserBalance(0); setUsername(null); setUserId(null); }
+      else window.setTimeout(refresh, 0);
+    });
+    return () => { window.removeEventListener("wallet-updated", refresh); subscription.unsubscribe(); };
+  }, []);
+
   // Generate a simulated crash point.
   const generateCrashPoint = () => {
     const rand = Math.random()

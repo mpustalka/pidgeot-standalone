@@ -3,11 +3,21 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import PrizePanel from "@/components/prize-panel";
+import AccountPanel from "@/components/account-panel";
+import { Gamepad2, Gift, UserRound } from "lucide-react";
 import { PidgeotFlightGame } from "@/components/pidgeot-flight-game";
 
 type AuthMode = "signin" | "signup";
 
 export default function HomePage() {
+  const [tab, setTab] = useState("game");
+  useEffect(() => {
+    const sync = () => setTab(["prizes", "account"].includes(window.location.hash.slice(1)) ? window.location.hash.slice(1) : "game");
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
   const [ready, setReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -49,19 +59,6 @@ export default function HomePage() {
         password,
       });
 
-console.log("Pidgeot auth result", {
-  mode,
-  userId: result.data.user?.id ?? null,
-  sessionCreated: !!result.data.session,
-  error: result.error
-    ? {
-        name: result.error.name,
-        message: result.error.message,
-        status: result.error.status,
-      }
-    : null,
-});
-
 setBusy(false);
 
 if (result.error) {
@@ -84,10 +81,7 @@ if (mode === "signup" && !result.data.session) {
 setSignedIn(true);
 setModalOpen(false);
 setPassword("");
-window.location.reload();
-
-    // Reload the game so it initializes with the authenticated user's balance.
-    window.location.reload();
+window.dispatchEvent(new Event("wallet-updated"));
   }
 
   if (!ready) {
@@ -102,7 +96,10 @@ window.location.reload();
 
   return (
     <main className="min-h-screen bg-[#08090c] text-white">
-      <div className="relative min-h-screen">
+      <header className="flight-topbar"><a href="#game" className="flight-brand"><img src="/images/pidgeot-icon.webp" alt=""/>PIDGEOT FLIGHT</a><span className="flight-eyebrow">{signedIn ? "FLIGHT DECK" : "GAME PREVIEW"}</span></header>
+      <nav className="flight-nav" aria-label="Main navigation">{([{id:"game", label:"Game", icon:Gamepad2}, {id:"prizes", label:"Prize Shop", icon:Gift}, {id:"account", label:"Account", icon:UserRound}]).map(({id,label,icon:Icon}) => <a key={id} href={`#${id}`} aria-current={tab === id ? "page" : undefined}><Icon size={18}/>{label}</a>)}</nav>
+      <div className="flight-workspace">
+      <section aria-label="Live game" className="relative overflow-hidden rounded-2xl border border-white/10">
         <PidgeotFlightGame />
 
         {!signedIn && (
@@ -117,6 +114,9 @@ window.location.reload();
           />
         )}
 
+      </section>
+      {tab === "prizes" && <PrizePanel signedIn={signedIn} onSignIn={() => setModalOpen(true)}/>}
+      {tab === "account" && (signedIn ? <div className="flight-legacy"><AccountPanel/></div> : <section className="flight-panel flight-empty"><UserRound size={36}/><h1>Your flight account</h1><p>Sign in to view your balance, collect rewards, and manage your account.</p><button className="flight-button" onClick={() => setModalOpen(true)}>Sign in to your account</button></section>)}
         {modalOpen && !signedIn && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md"
