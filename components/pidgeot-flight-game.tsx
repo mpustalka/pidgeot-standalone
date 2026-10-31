@@ -5,6 +5,7 @@ import { Minus, Plus, Volume2, VolumeX, ChevronDown } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import Image from "next/image"
+import { demoBetsForRound } from "@/lib/pidgeot/demo-bets"
 import type { GameActivity } from "@/lib/pidgeot/activity"
 
 interface BetPanel {
@@ -33,6 +34,7 @@ interface ActiveBet {
   betAmount: number
   cashout?: number
   isOwn?: boolean
+  isDemo?: boolean
 }
 
 interface CrashHistory {
@@ -84,6 +86,7 @@ export function PidgeotFlightGame() {
 
   const [showPanel2, setShowPanel2] = useState(false)
   const [crashHistory, setCrashHistory] = useState<CrashHistory[]>([])
+  const [demoRound, setDemoRound] = useState<PidgeotRound | null>(null)
   const [activeBets, setActiveBets] = useState<ActiveBet[]>([])
   const [myBets, setMyBets] = useState<ActiveBet[]>([])
   const [username, setUsername] = useState<string | null>(null)
@@ -148,6 +151,7 @@ export function PidgeotFlightGame() {
 
         const round = payload.round as PidgeotRound
         roundRef.current = round
+        setDemoRound(round)
 
         if (lastRoundId.current !== round.id) {
           lastRoundId.current = round.id
@@ -663,7 +667,9 @@ export function PidgeotFlightGame() {
     )
   }
 
-  const displayBets = activeTab === "all" ? activeBets : myBets
+  const demoBets = demoBetsForRound(demoRound, currentMultiplier, Date.now());
+  const allBets: ActiveBet[] = [...activeBets, ...demoBets];
+  const displayBets = activeTab === "all" ? allBets : myBets
 
   return (
     <div className="flex h-full flex-col bg-[#08080b] text-white lg:flex-row">
@@ -679,7 +685,7 @@ export function PidgeotFlightGame() {
                 : "text-white/40 hover:text-white/75"
             }`}
           >
-            All bets <span className="text-white/45">{activeBets.length}</span>
+            All bets <span className="text-white/45">{allBets.length}</span>
           </button>
 
           <button
@@ -718,15 +724,16 @@ export function PidgeotFlightGame() {
                   }`}
                 >
                   <span
-                    className={`truncate ${
+                    className={`flex min-w-0 items-center ${
                       bet.isOwn
                         ? "font-bold text-amber-300"
                         : "text-white/65"
                     }`}
                   >
-                    {bet.isOwn
+                    <span className="truncate">{bet.isOwn
                       ? `${bet.username} (You)`
-                      : bet.username}
+                      : bet.username}</span>
+                    {bet.isDemo && <span className="ml-1 shrink-0 rounded border border-amber-300/25 px-1 text-[9px] uppercase text-amber-200">Demo</span>}
                   </span>
 
                   <span className="text-right font-semibold text-white/65">
@@ -747,7 +754,7 @@ export function PidgeotFlightGame() {
         </div>
 
         <div className="border-t border-white/[0.07] px-3 py-2 text-[10px] text-white/25">
-          All player activity
+          {activeBets.length} real bets · {demoBets.length} simulated demo bets
         </div>
       </aside>
 
@@ -982,7 +989,7 @@ export function PidgeotFlightGame() {
                   : "text-white/40"
               }`}
             >
-              All bets ({activeBets.length})
+              All bets ({allBets.length})
             </button>
 
             <button
@@ -998,6 +1005,7 @@ export function PidgeotFlightGame() {
             </button>
           </div>
 
+          {activeTab === "all" && <p className="mb-2 text-[10px] text-white/45 lg:hidden">{activeBets.length} real bets · {demoBets.length} simulated demo bets</p>}
           {/* Compact mobile bets list */}
           <div className="mb-3 max-h-[100px] overflow-y-auto lg:hidden">
             {displayBets.length === 0 ? (
@@ -1006,7 +1014,7 @@ export function PidgeotFlightGame() {
               </div>
             ) : (
               <div className="space-y-1">
-                {displayBets.slice(0, 5).map((bet) => (
+                {displayBets.map((bet) => (
                   <div
                     key={bet.id}
                     className={`flex items-center justify-between rounded-md px-3 py-2 text-xs ${
@@ -1016,15 +1024,16 @@ export function PidgeotFlightGame() {
                     }`}
                   >
                     <span
-                      className={
+                      className={`flex min-w-0 items-center ${
                         bet.isOwn
                           ? "font-bold text-amber-300"
                           : "text-white/65"
-                      }
+                      }`}
                     >
-                      {bet.isOwn
+                      <span className="truncate">{bet.isOwn
                         ? `${bet.username} (You)`
-                        : bet.username}
+                        : bet.username}</span>
+                      {bet.isDemo && <span className="ml-1 shrink-0 rounded border border-amber-300/25 px-1 text-[9px] uppercase text-amber-200">Demo</span>}
                     </span>
 
                     <span className="font-semibold text-white/60">
