@@ -1,5 +1,7 @@
 import { getStore } from '@netlify/blobs';
+import { maxUploadBytes } from '@/lib/prize-image';
 import { getAuthenticatedClient } from '@/lib/supabase/api-auth';
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
  const auth = await getAuthenticatedClient(request);
@@ -9,7 +11,7 @@ export async function POST(request: Request) {
  try {
   const form = await request.formData(); const file = form.get('image');
   const types = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'};
-  if(!(file instanceof File) || !types[file.type] || file.size > 5*1024*1024 || !file.size) return Response.json({error:'Choose a JPG, PNG, WebP or GIF up to 5 MB.'},{status:400});
+  if(!(file instanceof File) || !types[file.type] || file.size > maxUploadBytes || !file.size) return Response.json({error:'Choose a JPG, PNG, WebP or GIF up to 3 MB. Larger photos must be optimized before upload.'},{status:400});
   const id = `${crypto.randomUUID()}.${types[file.type]}`;
   await getStore({name:'prize-images',consistency:'strong'}).set(id,await file.arrayBuffer());
   return Response.json({url:`/api/prize-images?id=${id}`});

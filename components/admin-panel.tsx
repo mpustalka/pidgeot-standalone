@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import RedemptionList from "./redemption-list";
 import { pidgeotApi } from "@/lib/pidgeot/api";
 import { createClient } from "@/lib/supabase/client";
+import { preparePrizeImage } from "@/lib/prize-image";
 
 type Settings = { daily_free_rounds:number; daily_free_coins:number; daily_login_points:number; daily_rewards_enabled:boolean; free_rounds_enabled:boolean; free_coins_enabled:boolean; login_bonus_enabled:boolean };
 type Player = { user_id:string; email:string|null; username:string|null; coins:number|null; points:number|null; created_at:string };
@@ -25,6 +26,7 @@ export default function AdminPage() {
   const [prizes,setPrizes] = useState<Prize[]>([]);
   const [prize,setPrize] = useState(blankPrize);
   const [busy,setBusy] = useState(false), [uploadingImage,setUploadingImage] = useState(false);
+  const [imageError,setImageError] = useState("");
 
   async function loadPlayers() {
     const {data,error} = await db.rpc("pidgeot_admin_list_users");
@@ -70,23 +72,30 @@ export default function AdminPage() {
   }
   async function uploadPrizeImage(file?:File) {
     if(!file)return;
-    if(!imageTypes.includes(file.type)){setMsg("Choose a JPG, PNG, WebP, or GIF image.");if(fileInput.current)fileInput.current.value="";return;}
-    if(file.size>maxImageBytes){setMsg("Image must be 5 MB or smaller.");if(fileInput.current)fileInput.current.value="";return;}
+    setImageError("");
+    if(!imageTypes.includes(file.type)){setImageError("Choose a JPG, PNG, WebP, or GIF image.");if(fileInput.current)fileInput.current.value="";return;}
+    if(!file.size || file.size>maxImageBytes){setImageError("Choose a non-empty image of 5 MB or smaller.");if(fileInput.current)fileInput.current.value="";return;}
     setUploadingImage(true);setMsg("Uploading prize image…");
     try {
       const {data:{session}} = await db.auth.getSession();
-      const form = new FormData(); form.set('image', file);
+      const form = new FormData(); form.set('image', await preparePrizeImage(file));
       const response = await fetch('/api/prize-images', {method:'POST',headers:{Authorization:`Bearer ${session?.access_token || ''}`},body:form});
-      const data = await response.json();
+      const data = await response.json().catch(()=>({error:response.status===413?'This image is too large to upload. Choose a smaller image.':'Image upload failed. Please try again.'}));
       if(!response.ok) throw new Error(data.error || 'Upload failed.');
+      if(typeof data.url !== 'string') throw new Error('The upload did not return an image. Please try again.');
+      // Only replace the current image after the stored file is readable.
+      const preview = new Image();
+      preview.src = data.url;
+      await preview.decode();
       setPrize(current=>({...current,image_url:data.url}));
       setMsg('Image uploaded. Save the prize to keep this image.');
-    } catch(e) {setMsg(e.message);} finally {setUploadingImage(false);}
+    } catch(e) {setImageError(`${e.message || 'Image upload failed.'} Retry the upload before saving.`);setMsg('The new prize image was not applied.');} finally {setUploadingImage(false);}
     if(fileInput.current)fileInput.current.value="";
   }
   async function savePrize(e:React.FormEvent) {
     e.preventDefault();
     if(uploadingImage){setMsg("Wait for image upload to finish.");return;}
+    if(imageError){setMsg("Resolve the image upload error before saving.");return;}
     setBusy(true);
     try { await pidgeotApi('/api/prizes', {action:'save',prize}); }
     catch(e) {setMsg(e.message);setBusy(false);return;}
@@ -113,19 +122,20 @@ export default function AdminPage() {
         <label className="font-bold">Reason<input className={input} value={reason} onChange={e=>setReason(e.target.value)} placeholder="launch bonus or correction"/></label></div>
         <button disabled={busy} onClick={()=>void adjustBalance()} className="mt-5 rounded-xl bg-amber-400 px-5 py-3 font-black text-white disabled:opacity-50">Apply balance adjustment</button><button onClick={()=>void loadPlayers()} className="ml-3 mt-5 rounded-xl border border-white/10 px-5 py-3 font-bold text-amber-300">Refresh accounts</button>
       </section>
-      <section className={card}><h2 className="text-2xl font-black">{prize.id?"Edit a prize":"Create a prize"}</h2><p className="mt-1 text-white/50">Choose a JPG, PNG, WebP, or GIF up to 5 MB. Save the prize after the upload completes.</p>
+      <section className={card}><h2 className="text-2xl font-black">{prize.id?"Edit a prize":"Create a prize"}</h2><p className="mt-1 text-white/50">Choose a JPG, PNG, or WebP up to 5 MB, or a GIF up to 3 MB. Large photos are optimized before upload. Save the prize after the upload completes.</p>
         <form onSubmit={savePrize} className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="font-bold">Prize name<input required maxLength={120} className={input} value={prize.title} onChange={e=>setPrize({...prize,title:e.target.value})} placeholder="Pidgeot plush, sticker pack…"/></label>
           <label className="font-bold">Coin cost<input required type="number" min="1" className={input} value={prize.points_cost} onChange={e=>setPrize({...prize,points_cost:e.target.value})}/></label>
           <label className="font-bold">Stock available<input required type="number" min="0" className={input} value={prize.stock} onChange={e=>setPrize({...prize,stock:e.target.value})}/></label>
           <label className="font-bold">Upload image<input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploadingImage||busy} onChange={e=>void uploadPrizeImage(e.target.files?.[0])} className={`${input} file:mr-3 file:rounded-lg file:border-0 file:bg-white/5 file:px-3 file:py-2 file:font-bold file:text-amber-300`}/><span className="text-xs font-normal text-white/50">Upload first, then save the prize.</span></label>
-          <label className="font-bold">Image URL<input type="text" className={input} value={prize.image_url} onChange={e=>setPrize({...prize,image_url:e.target.value})} placeholder="Filled after upload; editable"/></label>
-          {prize.image_url&&<div className="sm:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-3"><p className="mb-2 text-sm font-bold text-amber-300">Image preview</p><img src={prize.image_url} alt="Prize preview" className="max-h-56 max-w-full rounded-xl object-contain"/><button type="button" onClick={()=>setPrize({...prize,image_url:""})} className="mt-2 text-sm font-bold text-rose-700">Remove image URL</button></div>}
+          {imageError&&<p role="alert" className="sm:col-span-2 text-rose-300">{imageError} <button type="button" onClick={()=>setImageError("")} className="underline">Discard failed upload</button></p>}
+          <label className="font-bold">Image URL<input type="text" className={input} value={prize.image_url} disabled={uploadingImage||busy} onChange={e=>{setImageError("");setPrize({...prize,image_url:e.target.value});}} placeholder="Filled after upload; editable"/></label>
+          {prize.image_url&&<div className="sm:col-span-2 rounded-2xl border border-white/10 bg-white/5 p-3"><p className="mb-2 text-sm font-bold text-amber-300">Image preview</p><img src={prize.image_url} alt="Prize preview" className="max-h-56 max-w-full rounded-xl object-contain"/><button type="button" disabled={uploadingImage||busy} onClick={()=>{setImageError("");setPrize({...prize,image_url:""});}} className="mt-2 text-sm font-bold text-rose-700">Remove image URL</button></div>}
           <label className="font-bold sm:col-span-2">Description<textarea className={input} rows={3} value={prize.description} onChange={e=>setPrize({...prize,description:e.target.value})} placeholder="Tell players what makes this prize special."/></label>
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={prize.enabled} onChange={e=>setPrize({...prize,enabled:e.target.checked})}/> Show on public prize shelf</label>
-          <div className="flex flex-wrap gap-3"><button disabled={busy||uploadingImage} className="rounded-xl bg-white/50 px-5 py-3 font-extrabold text-white disabled:opacity-50">{uploadingImage?"Uploading…":busy?"Saving…":prize.id?"Save prize changes":"Create prize"}</button>{prize.id&&<button type="button" disabled={uploadingImage||busy} onClick={()=>setPrize(blankPrize)} className="rounded-xl border px-5 py-3 font-bold">Cancel edit</button>}</div>
+          <div className="flex flex-wrap gap-3"><button disabled={busy||uploadingImage||!!imageError} className="rounded-xl bg-white/50 px-5 py-3 font-extrabold text-white disabled:opacity-50">{uploadingImage?"Uploading…":busy?"Saving…":prize.id?"Save prize changes":"Create prize"}</button>{prize.id&&<button type="button" disabled={uploadingImage||busy} onClick={()=>{setImageError("");setPrize(blankPrize);}} className="rounded-xl border px-5 py-3 font-bold">Cancel edit</button>}</div>
         </form>
-        <div className="mt-7 space-y-3">{prizes.map(p=><div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center gap-3">{p.image_url&&<img src={p.image_url} alt="" className="h-16 w-16 rounded-xl bg-[#171a21] object-contain"/>}<div><p className="font-black">{p.title} {p.enabled?"Visible":"Hidden"}</p><p className="text-sm text-white/50">{p.points_cost} coins · {p.stock} in stock · {p.enabled?"Visible":"Hidden"}</p></div></div><button disabled={uploadingImage||busy} onClick={()=>setPrize({id:p.id,title:p.title,description:p.description||"",image_url:p.image_url||"",points_cost:String(p.points_cost),stock:String(p.stock),enabled:p.enabled})} className="rounded-xl bg-[#171a21] px-4 py-2 font-bold text-amber-300 shadow-sm">Edit prize</button></div>)}</div>
+        <div className="mt-7 space-y-3">{prizes.map(p=><div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center gap-3">{p.image_url&&<img src={p.image_url} alt="" className="h-16 w-16 rounded-xl bg-[#171a21] object-contain"/>}<div><p className="font-black">{p.title} {p.enabled?"Visible":"Hidden"}</p><p className="text-sm text-white/50">{p.points_cost} coins · {p.stock} in stock · {p.enabled?"Visible":"Hidden"}</p></div></div><button disabled={uploadingImage||busy} onClick={()=>{setImageError("");setPrize({id:p.id,title:p.title,description:p.description||"",image_url:p.image_url||"",points_cost:String(p.points_cost),stock:String(p.stock),enabled:p.enabled});}} className="rounded-xl bg-[#171a21] px-4 py-2 font-bold text-amber-300 shadow-sm">Edit prize</button></div>)}</div>
       </section>
       <section className={card}><div className="flex items-center justify-between"><h2 className="text-2xl font-black">Players ({players.length})</h2><button onClick={()=>void loadPlayers()} className="font-bold text-amber-300">Refresh</button></div><div className="mt-4 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="text-white/50"><th className="py-2">Account</th><th>Coins</th><th>Prize points</th><th>Joined</th></tr></thead><tbody>{players.map(p=><tr key={p.user_id} className="border-t border-white/10"><td className="py-3 pr-4">{p.email||p.username||"—"}</td><td>{p.coins??0}</td><td>{p.points??0}</td><td>{new Date(p.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div></section>
     </>}
