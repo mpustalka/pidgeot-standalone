@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import Image from "next/image"
 import { demoBetsForRound } from "@/lib/pidgeot/demo-bets"
 import type { GameActivity } from "@/lib/pidgeot/activity"
+import { resolveCashout } from "@/lib/pidgeot/cashout"
 
 interface BetPanel {
   betAmount: string
@@ -321,10 +322,13 @@ export function PidgeotFlightGame() {
     try {
       const { data, error } = await supabase.rpc("pidgeot_cashout", { p_bet_id: betId })
       if (error) throw error
-      const row = Array.isArray(data) ? data[0] : data
-      const payout = Number(row?.payout ?? row?.[0]?.payout)
-      const cashoutMultiplier = Number(row?.cashout_multiplier ?? row?.[0]?.cashout_multiplier)
-      if (!Number.isFinite(payout) || !Number.isFinite(cashoutMultiplier)) throw new Error("Cashout did not return a payout")
+      const details = await resolveCashout(supabase, betId, data)
+      if (!details) {
+        await fetchUserBalance()
+        toast.info("Cashout submitted. Updating your bet…")
+        return
+      }
+      const { payout, multiplier: cashoutMultiplier } = details
       activityEpoch.current++
       setBetPanels((prev) => prev.map((panel, i) => i === panelIndex ? { ...panel, betStatus: "cashed", cashedAmount: payout } : panel))
       setMyBets((prev) => prev.map((bet) => bet.id === betId ? { ...bet, cashout: cashoutMultiplier } : bet))
